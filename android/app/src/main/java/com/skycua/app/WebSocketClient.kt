@@ -44,7 +44,7 @@ class WebSocketClient {
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                Log.d("SkyCUA", "Connected to $host:$port")
+                Log.d("SkyCUA", "Connected to $wsUrl")
                 _state.value = _state.value.copy(connected = true, error = null)
             }
 
