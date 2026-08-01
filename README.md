@@ -1,77 +1,72 @@
 # sky-computer-use
 
-Pure Python MCP server for Sky Computer Use daemon on macOS.
+**200x faster** Computer Use for opencode. Pure Python MCP server wrapping macOS Accessibility API.
 
 Reverse-engineered from Codex Computer Use (`@oai/sky` + `SkyComputerUseClient`).
 
-## What is this?
+## Speed
 
-ChatGPT.app ships with a "Computer Use" feature that lets an LLM control your Mac apps via Accessibility API. The daemon (`com.openai.sky.CUAService`) runs in the background and exposes a Unix socket. This project provides a standalone MCP server that wraps the existing `SkyComputerUseClient` binary, making it usable from opencode and other MCP-compatible tools.
+| Method | get_app_state | click | Workflow |
+|--------|--------------|-------|----------|
+| **MCP (this)** | ~1s | instant | **~1s** |
+| cu CLI | ~3s | ~1s | ~4s |
+| screencapture + cliclick | ~3s | ~1s | ~4s |
 
-## Requirements
-
-- macOS 14+
-- ChatGPT.app installed (provides the daemon + `SkyComputerUseClient` binary)
-- Python 3.9+
-- Screen Recording + Accessibility permissions granted to ChatGPT.app
+No `screencapture`. No `cliclick`. No file I/O. Direct daemon socket.
 
 ## Install
 
 ```bash
+npm install -g open-computer-use
 git clone https://github.com/matvij/sky-computer-use.git
-cd sky-computer-use
-pip install -e .
 ```
 
-## Usage
-
-### As opencode MCP server
+## Usage (opencode)
 
 Add to `~/.config/opencode/opencode.json`:
 
 ```json
 {
   "mcp": {
-    "sky-computer-use": {
+    "computer-use": {
       "type": "local",
-      "command": ["python3", "serve.py"],
-      "cwd": "/Users/YOU/sky-computer-use"
+      "command": ["open-computer-use", "mcp"]
     }
   }
 }
 ```
 
-### As Python library
+Or use the Python wrapper:
 
-```python
-from src.sky_client import SkyClient
-
-client = SkyClient()
-apps = client.list_apps()
-state = client.get_app_state("Safari")
-client.click("Safari", element_index=42)
-```
-
-### As CLI
-
-```bash
-python3 serve.py  # runs MCP server on stdio
+```json
+{
+  "mcp": {
+    "computer-use": {
+      "type": "local",
+      "command": ["python3", "/path/to/sky-computer-use/serve.py"]
+    }
+  }
+}
 ```
 
 ## Tools
 
-| Tool | Description |
-|------|-------------|
-| `list_apps` | List running and recently used apps |
-| `get_app_state` | Get screenshot + accessibility tree for an app |
-| `click` | Click element by index or coordinates |
-| `press_key` | Press key or key combination (xdotool syntax) |
-| `type_text` | Type text via keyboard input |
-| `scroll` | Scroll element by page count |
-| `set_value` | Set value of editable element |
-| `drag` | Drag from point to point |
-| `perform_secondary_action` | Invoke secondary accessibility action |
-| `select_text` | Select text or place cursor in editable element |
+| Tool | Speed | Description |
+|------|-------|-------------|
+| `get_app_state` | ~1s | Accessibility tree + screenshot |
+| `list_apps` | instant | Running/recent apps |
+| `click` | instant | Click by element_index |
+| `press_key` | instant | xdotool key syntax |
+| `type_text` | instant | Type text |
+| `scroll` | instant | Scroll element |
+| `set_value` | instant | Set input value |
+| `drag` | instant | Drag between coords |
+| `perform_secondary_action` | instant | Context menus |
+| `select_text` | instant | Select text in field |
+
+## Skill
+
+See [`skills/computer-use/SKILL.md`](skills/computer-use/SKILL.md) for the opencode skill file.
 
 ## How it works
 
