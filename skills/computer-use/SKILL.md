@@ -1,16 +1,35 @@
 ---
 name: computer-use
 description: |
-  Fast macOS computer use via MCP (open-computer-use).
+  Fast macOS computer use via OpenCode plugin + MCP.
+  Control your Mac from Android app or directly from OpenCode.
   200x faster than cu CLI: no screencapture, no cliclick, no file I/O.
   Uses Accessibility tree + element indices for instant actions.
 ---
 
-# Computer Use — Fast (MCP)
+# Computer Use — Fast (Plugin + MCP)
 
-**USE MCP TOOLS ONLY. NEVER use `cu` CLI or `screencapture`.**
+**USE PLUGIN TOOLS. NEVER use `cu` CLI or `screencapture`.**
 
-## Available Tools
+## Architecture
+
+```
+Android App ←→ WebSocket (port 8765) ←→ OpenCode Plugin ←→ MCP Binary ←→ Mac
+```
+
+## Plugin Tools (computer_use)
+
+| Tool | Description |
+|------|-------------|
+| `computer_use(action="screenshot")` | Capture screen |
+| `computer_use(action="list_apps")` | List running apps |
+| `computer_use(action="click", element="N")` | Click element N |
+| `computer_use(action="type", text="hello")` | Type text |
+| `computer_use(action="key", target="Return")` | Press key |
+| `computer_use(action="scroll", element="N", target="down")` | Scroll |
+| `computer_use(action="switch_app", target="Safari")` | Switch app |
+
+## MCP Tools (direct)
 
 | Tool | Speed | When |
 |------|-------|------|
@@ -22,8 +41,6 @@ description: |
 | `scroll` | instant | Scroll element |
 | `set_value` | instant | Set input value |
 | `drag` | instant | Drag between coordinates |
-| `perform_secondary_action` | instant | Context menus, expand |
-| `select_text` | instant | Select text in field |
 
 ## Workflow
 
@@ -56,30 +73,19 @@ description: |
 | Cmd+V | `super+v` |
 | Cmd+A | `super+a` |
 
-## App Resolution
+## Android App
 
-App can be:
-- Display name: `"Safari"`, `"Finder"`, `"Visual Studio Code"`
-- Bundle ID: `"com.apple.Safari"`, `"com.apple.finder"`
-- Path: `"/Applications/Safari.app"`
+The Android app connects via WebSocket to `ws://localhost:8765` (or via ngrok tunnel).
+
+Features:
+- Real-time screen streaming
+- Tappable screenshot (click by coordinates)
+- Quick action buttons (keyboard shortcuts)
+- Chat with OpenCode agent
 
 ## Performance
 
 | Method | get_app_state | click | Total |
 |--------|--------------|-------|-------|
-| **MCP (this)** | ~1s | instant | **~1s** |
+| **Plugin (this)** | ~1s | instant | **~1s** |
 | cu CLI | ~3s | ~1s | ~4s |
-
-## Example
-
-```
-# Open Safari and navigate
-get_app_state("Safari")
-→ tree shows element 42 is address bar
-
-click("Safari", element_index="42")
-type_text("Safari", "github.com")
-press_key("Safari", "Return")
-get_app_state("Safari")
-→ verify page loaded
-```
