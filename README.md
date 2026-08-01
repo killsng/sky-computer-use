@@ -1,175 +1,55 @@
-# sky-computer-use
+# Sky Computer Use
 
-**200x faster** Computer Use for opencode. Pure Python MCP server wrapping macOS Accessibility API.
+Control your Mac from Android phone with AI.
 
-Reverse-engineered from Codex Computer Use (`@oai/sky` + `SkyComputerUseClient`).
+## Architecture
 
-## Speed
-
-| Method | get_app_state | click | Workflow |
-|--------|--------------|-------|----------|
-| **MCP (this)** | ~1s | instant | **~1s** |
-| cu CLI | ~3s | ~1s | ~4s |
-| screencapture + cliclick | ~3s | ~1s | ~4s |
-
-No `screencapture`. No `cliclick`. No file I/O. Direct daemon socket.
-
-## Install
-
-```bash
-npm install -g open-computer-use
-git clone https://github.com/matvij/sky-computer-use.git
-cd sky-computer-use/server && pip install websockets
+```
+Android App ←→ WebSocket (8765) ←→ OpenCode Plugin ←→ MCP Binary ←→ Mac
 ```
 
-## Remote Access (Tunnel)
+## Components
 
-Access your Mac from anywhere in the world:
+### Android App
+- Real-time screen streaming
+- Tappable screenshot (click by coordinates)
+- Quick action buttons (keyboard shortcuts)
+- Chat with OpenCode agent
 
-```bash
-# Via Cloudflare (free, no account needed)
-python server.py --tunnel cloudflare
+### OpenCode Plugin
+- WebSocket server on port 8765
+- `computer_use` tool for AI agents
+- Auto-refresh screenshots
 
-# Via ngrok (free tier available)
-python server.py --tunnel ngrok
+### MCP Binary
+- `open-computer-use` npm package
+- Accessibility tree access
+- Element-based interactions
 
-# Via localtunnel (free)
-python server.py --tunnel localtunnel
-```
+## Quick Start
 
-Server will print a public URL like:
-```
-TUNNEL ACTIVE: https://abc-123.trycloudflare.com
-```
-
-Enter this URL in the Android app → Connect.
+1. Install OpenCode: `curl -fsSL https://opencode.ai/install | bash`
+2. Install MCP: `npm i -g open-computer-use`
+3. Start plugin (runs automatically with OpenCode)
+4. Start ngrok: `ngrok http 8765`
+5. Connect Android app to ngrok URL
 
 ## Android App
 
-See [`android/`](android/) for the mobile monitoring app.
+Download: [Releases](https://github.com/killsng/sky-computer-use/releases)
 
-## Usage (opencode)
-
-Add to `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "mcp": {
-    "computer-use": {
-      "type": "local",
-      "command": ["open-computer-use", "mcp"]
-    }
-  }
-}
-```
-
-Or use the Python wrapper:
-
-```json
-{
-  "mcp": {
-    "computer-use": {
-      "type": "local",
-      "command": ["python3", "/path/to/sky-computer-use/serve.py"]
-    }
-  }
-}
-```
-
-## Tools
-
-| Tool | Speed | Description |
-|------|-------|-------------|
-| `get_app_state` | ~1s | Accessibility tree + screenshot |
-| `list_apps` | instant | Running/recent apps |
-| `click` | instant | Click by element_index |
-| `press_key` | instant | xdotool key syntax |
-| `type_text` | instant | Type text |
-| `scroll` | instant | Scroll element |
-| `set_value` | instant | Set input value |
-| `drag` | instant | Drag between coords |
-| `perform_secondary_action` | instant | Context menus |
-| `select_text` | instant | Select text in field |
-
-## Skill
-
-See [`skills/computer-use/SKILL.md`](skills/computer-use/SKILL.md) for the opencode skill file.
-
-## How it works
+## Usage
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  opencode / LLM agent                              │
-│    ↓ (MCP protocol over stdio)                     │
-│  serve.py (Python MCP server)                      │
-│    ↓ (spawns binary subprocess)                    │
-│  SkyComputerUseClient mcp                          │
-│    ↓ (JSON-RPC 2.0 over unix socket)              │
-│  computeruse.sock                                  │
-│    ↓                                               │
-│  SkyComputerUseService (com.openai.sky.CUAService) │
-│    ↓ (Accessibility API + ScreenCapture)           │
-│  macOS UI                                          │
-└─────────────────────────────────────────────────────┘
+# In OpenCode, use computer_use tool:
+computer_use(action="screenshot")
+computer_use(action="click", element="42")
+computer_use(action="type", text="hello")
+computer_use(action="key", target="Return")
 ```
 
-## Architecture Notes
+## Links
 
-### Daemon Socket Protocol
-
-- **Transport:** Unix socket
-- **Path:** `~/Library/Group Containers/2DC432GLL2.com.openai.sky.CUAService/IPC/computeruse.sock`
-- **Protocol:** JSON-RPC 2.0, 4-byte LE length prefix
-- **API version:** `CodexComputerUseIPC-2`
-
-The daemon verifies code signature of connecting processes. Unsigned clients (like raw Python sockets) are rejected. The `SkyComputerUseClient` binary is signed and can connect.
-
-### Request Types
-
-| RequestType | Purpose |
-|-------------|---------|
-| `ComputerUseIPCListAppsRequest` | List available apps |
-| `ComputerUseIPCAppStartRequest` | Start/launch an app |
-| `ComputerUseIPCAppGetSkyshotRequest` | Get screenshot + accessibility tree |
-| `ComputerUseIPCAppPerformActionRequest` | Perform UI action (click, type, scroll, etc.) |
-| `ComputerUseIPCAppPolicyRequest` | Get app policy |
-
-### Action Payloads
-
-Actions are nested in `ComputerUseIPCAppPerformActionRequest`:
-
-```json
-{
-  "action": {
-    "click": {
-      "at": {"elementIndex": 42},
-      "clickCount": 1,
-      "mouseButton": "left"
-    }
-  }
-}
-```
-
-```json
-{
-  "action": {
-    "pressKey": {"_0": "Return"}
-  }
-}
-```
-
-```json
-{
-  "action": {
-    "scroll": {
-      "at": {"elementIndex": 10},
-      "direction": "down",
-      "pages": 1
-    }
-  }
-}
-```
-
-## License
-
-MIT
+- GitHub: https://github.com/killsng/sky-computer-use
+- OpenCode: https://opencode.ai
+- MCP: https://opencode.ai/docs/mcp-servers/
