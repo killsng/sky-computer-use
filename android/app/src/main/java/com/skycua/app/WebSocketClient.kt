@@ -14,7 +14,7 @@ import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
 data class AgentState(
-    val app: String = "Safari",
+    val app: String = "Finder",
     val screenshot: String? = null,
     val text: String = "",
     val apps: String = "",

@@ -203,7 +203,7 @@ fun SkyCUAApp(client: WebSocketClient) {
                 ) {
                     Text("App:", color = Color.Gray, fontSize = 12.sp)
                     Spacer(Modifier.width(8.dp))
-                    listOf("Safari", "Finder", "System Settings", "Terminal").forEach { app ->
+                    listOf("Finder", "Safari", "System Settings", "Terminal").forEach { app ->
                         FilterChip(
                             selected = state.app == app,
                             onClick = { client.setApp(app) },

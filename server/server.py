@@ -356,7 +356,7 @@ class StateBroadcaster:
         self.bridge = bridge
         self.gemini = gemini
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
-        self.current_app = "Safari"
+        self.current_app = "Finder"
         self._running = False
         self._log: List[dict] = []
         self._last_screenshot: Optional[str] = None
@@ -465,6 +465,10 @@ class StateBroadcaster:
         while self._running:
             try:
                 state = await self.bridge.get_state(self.current_app)
+                # If app not found, try Finder
+                if "appNotFound" in state.get("text", ""):
+                    self.current_app = "Finder"
+                    state = await self.bridge.get_state(self.current_app)
                 self._last_screenshot = state.get("screenshot")
                 await self.broadcast({
                     "type": "screenshot",
