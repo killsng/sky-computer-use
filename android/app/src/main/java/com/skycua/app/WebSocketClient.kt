@@ -32,9 +32,14 @@ class WebSocketClient {
     private val _messages = MutableSharedFlow<String>()
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
-    fun connect(host: String, port: Int = 8765) {
+    fun connect(url: String) {
+        val wsUrl = if (url.startsWith("ws://") || url.startsWith("wss://")) {
+            if (url.startsWith("ws://")) "wss://" + url.removePrefix("ws://") else url
+        } else {
+            "ws://$url"
+        }
         val request = Request.Builder()
-            .url("ws://$host:$port")
+            .url(wsUrl)
             .build()
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {

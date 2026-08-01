@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SkyCUAApp(client: WebSocketClient) {
     val state by client.state.collectAsState()
-    var serverHost by remember { mutableStateOf("192.168.1.100") }
+    var serverHost by remember { mutableStateOf("192.168.1.100:8765") }
     var showConnectDialog by remember { mutableStateOf(!state.connected) }
     var showInput by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
@@ -287,11 +287,15 @@ fun SkyCUAApp(client: WebSocketClient) {
                     OutlinedTextField(
                         value = serverHost,
                         onValueChange = { serverHost = it },
-                        label = { Text("Server IP") },
-                        singleLine = true
+                        label = { Text("Server URL") },
+                        singleLine = true,
+                        placeholder = { Text("IP:port or trycloudflare.com URL") }
                     )
                     Spacer(Modifier.height(8.dp))
-                    Text("Default port: 8765", fontSize = 12.sp, color = Color.Gray)
+                    Text("Examples:", fontSize = 12.sp, color = Color.Gray)
+                    Text("  192.168.1.100:8765", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Color.Gray)
+                    Text("  xxx.trycloudflare.com", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Color.Gray)
+                    Text("  ngrok.io URL", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Color.Gray)
                 }
             },
             confirmButton = {

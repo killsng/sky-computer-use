@@ -19,7 +19,34 @@ No `screencapture`. No `cliclick`. No file I/O. Direct daemon socket.
 ```bash
 npm install -g open-computer-use
 git clone https://github.com/matvij/sky-computer-use.git
+cd sky-computer-use/server && pip install websockets
 ```
+
+## Remote Access (Tunnel)
+
+Access your Mac from anywhere in the world:
+
+```bash
+# Via Cloudflare (free, no account needed)
+python server.py --tunnel cloudflare
+
+# Via ngrok (free tier available)
+python server.py --tunnel ngrok
+
+# Via localtunnel (free)
+python server.py --tunnel localtunnel
+```
+
+Server will print a public URL like:
+```
+TUNNEL ACTIVE: https://abc-123.trycloudflare.com
+```
+
+Enter this URL in the Android app → Connect.
+
+## Android App
+
+See [`android/`](android/) for the mobile monitoring app.
 
 ## Usage (opencode)
 
