@@ -467,16 +467,18 @@ class StateBroadcaster:
         while self._running:
             try:
                 state = await self.bridge.get_state(self.current_app)
+                text = state.get("text", "")
                 # If app not found, try Finder
-                if "appNotFound" in state.get("text", ""):
+                if "appNotFound" in text:
                     self.current_app = "Finder"
                     state = await self.bridge.get_state(self.current_app)
+                    text = state.get("text", "")
                 self._last_screenshot = state.get("screenshot")
                 await self.broadcast({
                     "type": "screenshot",
                     "app": self.current_app,
                     "screenshot": self._last_screenshot,
-                    "text": state.get("text", "")[:2000],
+                    "text": text[:2000],
                 })
                 self.log_add({"action": "screenshot", "app": self.current_app})
                 # Read chat file for OpenCode responses

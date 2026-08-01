@@ -67,7 +67,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun SkyCUAApp(client: WebSocketClient) {
     val state by client.state.collectAsState()
-    var serverHost by remember { mutableStateOf("roundish-slang-uptown.ngrok-free.dev") }
+    var serverHost by remember { mutableStateOf("localhost:8765") }
     var showConnectDialog by remember { mutableStateOf(!state.connected) }
     var inputText by remember { mutableStateOf("") }
     var chatInput by remember { mutableStateOf("") }

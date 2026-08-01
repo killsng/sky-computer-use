@@ -60,9 +60,10 @@ class WebSocketClient {
         _state.value = _state.value.copy(connecting = true, error = null)
         val wsUrl = when {
             url.startsWith("wss://") -> url
-            url.startsWith("ws://") -> "wss://" + url.removePrefix("ws://")
+            url.startsWith("ws://") -> url
             url.startsWith("https://") -> "wss://" + url.removePrefix("https://")
-            url.startsWith("http://") -> "wss://" + url.removePrefix("http://")
+            url.startsWith("http://") -> "ws://" + url.removePrefix("http://")
+            url.contains("localhost") || url.contains("127.0.0.1") -> "ws://$url"
             else -> "wss://$url"
         }
         Log.d("SkyCUA", "Connecting to $wsUrl")
