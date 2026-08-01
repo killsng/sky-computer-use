@@ -350,6 +350,8 @@ Always respond in the same language the user writes in."""
 class StateBroadcaster:
     """Periodically captures state and broadcasts to all clients."""
 
+    CHAT_FILE = "/tmp/skycua-chat.json"
+
     def __init__(self, bridge: AgentBridge, gemini: Optional[GeminiChat] = None):
         self.bridge = bridge
         self.gemini = gemini
@@ -358,6 +360,11 @@ class StateBroadcaster:
         self._running = False
         self._log: List[dict] = []
         self._last_screenshot: Optional[str] = None
+        self._chat_queue: List[dict] = []
+        self._chat_responses: Dict[str, str] = {}
+        # Init chat file
+        if not os.path.exists(self.CHAT_FILE):
+            self._write_chat_file()
 
     @staticmethod
     def parse_actions(text: str) -> List[dict]:
@@ -422,18 +429,56 @@ class StateBroadcaster:
     def log_recent(self, n: int = 20) -> list:
         return self._log[-n:]
 
+    def _write_chat_file(self):
+        data = {
+            "queue": self._chat_queue,
+            "responses": self._chat_responses,
+            "app": self.current_app,
+            "screenshot": self._last_screenshot,
+        }
+        try:
+            with open(self.CHAT_FILE, "w") as f:
+                json.dump(data, f)
+        except Exception:
+            pass
+
+    def _read_chat_file(self):
+        try:
+            with open(self.CHAT_FILE, "r") as f:
+                data = json.load(f)
+            # Check for responses from OpenCode
+            for msg_id, response in data.get("responses", {}).items():
+                if msg_id not in self._chat_responses:
+                    self._chat_responses[msg_id] = response
+            # Check for new commands from OpenCode
+            for cmd in data.get("commands", []):
+                self._chat_queue.append(cmd)
+            # Clear processed commands
+            data["commands"] = []
+            data["responses"] = {}
+            self._write_chat_file()
+        except Exception:
+            pass
+
     async def capture_loop(self):
         self._running = True
         while self._running:
             try:
                 state = await self.bridge.get_state(self.current_app)
+                self._last_screenshot = state.get("screenshot")
                 await self.broadcast({
                     "type": "screenshot",
                     "app": self.current_app,
-                    "screenshot": state.get("screenshot"),
+                    "screenshot": self._last_screenshot,
                     "text": state.get("text", "")[:2000],
                 })
                 self.log_add({"action": "screenshot", "app": self.current_app})
+                # Read chat file for OpenCode responses
+                self._read_chat_file()
+                # Check for pending responses
+                for msg_id, response in list(self._chat_responses.items()):
+                    await self.broadcast({"type": "chat_response", "id": msg_id, "text": response})
+                    del self._chat_responses[msg_id]
             except Exception as e:
                 self.log_add({"action": "error", "message": str(e)})
             await asyncio.sleep(SCREENSHOT_INTERVAL)
@@ -491,51 +536,26 @@ class StateBroadcaster:
             if not text:
                 return
 
-            if not self.gemini:
-                await ws.send(json.dumps({
-                    "type": "chat_response",
-                    "text": "AI chat not configured. Set --gemini-key on server.",
-                }))
-                return
+            msg_id = f"msg_{int(time.time()*1000)}"
 
-            try:
-                await ws.send(json.dumps({"type": "chat_thinking"}))
-                response = await self.gemini.chat(text, self._last_screenshot)
-                self.log_add({"action": "chat", "query": text[:100], "response": response[:200]})
+            # Add user message to chat file
+            self._chat_queue.append({
+                "id": msg_id,
+                "role": "user",
+                "text": text,
+                "app": self.current_app,
+                "screenshot": self._last_screenshot,
+                "tree": (await self.bridge.get_state(self.current_app)).get("text", "")[:3000],
+            })
+            self._write_chat_file()
 
-                # Parse and execute actions from AI response
-                actions = self.parse_actions(response)
-                results = []
-                for act in actions:
-                    act["args"]["app"] = self.current_app
-                    r = await self.bridge.call_tool(act["tool"], act["args"])
-                    results.append(f"{act['tool']}: {r[:100]}")
-                    self.log_add({"action": act["tool"], "args": act["args"], "result": r[:200]})
-                    await asyncio.sleep(0.3)
-
-                # If actions were executed, refresh screenshot
-                if actions:
-                    await asyncio.sleep(0.5)
-                    state = await self.bridge.get_state(self.current_app)
-                    await self.broadcast({
-                        "type": "screenshot",
-                        "app": self.current_app,
-                        "screenshot": state.get("screenshot"),
-                        "text": state.get("text", "")[:2000],
-                    })
-
-                # Clean response (remove ACTION lines)
-                clean = "\n".join(l for l in response.split("\n") if not l.startswith("ACTION:"))
-                if results:
-                    clean += "\n\nExecuted: " + "; ".join(results)
-
-                await ws.send(json.dumps({"type": "chat_response", "text": clean}))
-            except Exception as e:
-                await ws.send(json.dumps({"type": "chat_response", "text": f"Error: {e}"}))
+            self.log_add({"action": "chat", "query": text[:100], "id": msg_id})
+            await ws.send(json.dumps({"type": "chat_thinking", "id": msg_id}))
 
         elif msg_type == "chat_clear":
-            if self.gemini:
-                self.gemini.clear()
+            self._chat_queue = []
+            self._chat_responses = {}
+            self._write_chat_file()
             await ws.send(json.dumps({"type": "chat_cleared"}))
 
 
