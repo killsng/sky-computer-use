@@ -243,7 +243,7 @@ class AgentBridge:
 
 
 class GeminiChat:
-    """Free AI chat with vision via Google Gemini or Groq fallback."""
+    """AI chat via Groq (fast, free) with optional Gemini vision."""
 
     def __init__(self, api_key: str, groq_key: Optional[str] = None):
         self.api_key = api_key
@@ -251,17 +251,19 @@ class GeminiChat:
         self.history: List[dict] = []
 
     async def chat(self, message: str, screenshot_b64: Optional[str] = None) -> str:
-        # Try Gemini first
-        try:
-            return await self._gemini_chat(message, screenshot_b64)
-        except Exception as e:
-            # Try Groq fallback
-            if self.groq_key:
-                try:
-                    return await self._groq_chat(message)
-                except Exception as e2:
-                    return f"AI error (Groq): {e2}"
-            return f"AI error: {e}"
+        # Always try Groq first (fast, no rate limits)
+        if self.groq_key:
+            try:
+                return await self._groq_chat(message)
+            except Exception as e:
+                pass
+        # Fallback to Gemini (has vision but rate limited)
+        if self.api_key:
+            try:
+                return await self._gemini_chat(message, screenshot_b64)
+            except Exception as e:
+                return f"AI temporarily unavailable. Error: {e}"
+        return "AI not configured. Set --groq-key on server."
 
     async def _gemini_chat(self, message: str, screenshot_b64: Optional[str] = None) -> str:
         contents = list(self.history[-10:])
@@ -542,19 +544,52 @@ class StateBroadcaster:
 
             msg_id = f"msg_{int(time.time()*1000)}"
 
-            # Add user message to chat file
-            self._chat_queue.append({
-                "id": msg_id,
-                "role": "user",
-                "text": text,
-                "app": self.current_app,
-                "screenshot": self._last_screenshot,
-                "tree": (await self.bridge.get_state(self.current_app)).get("text", "")[:3000],
-            })
-            self._write_chat_file()
-
             self.log_add({"action": "chat", "query": text[:100], "id": msg_id})
             await ws.send(json.dumps({"type": "chat_thinking", "id": msg_id}))
+
+            # Try AI directly via Groq/Gemini
+            if self.gemini:
+                try:
+                    response = await self.gemini.chat(text, self._last_screenshot)
+                    # Execute actions if any
+                    actions = self.parse_actions(response)
+                    results = []
+                    for act in actions:
+                        act["args"]["app"] = self.current_app
+                        r = await self.bridge.call_tool(act["tool"], act["args"])
+                        results.append(f"{act['tool']}: {r[:100]}")
+                        await asyncio.sleep(0.3)
+                    if actions:
+                        await asyncio.sleep(0.5)
+                        state = await self.bridge.get_state(self.current_app)
+                        if "appNotFound" in state.get("text", ""):
+                            self.current_app = "Finder"
+                            state = await self.bridge.get_state(self.current_app)
+                        self._last_screenshot = state.get("screenshot")
+                        await self.broadcast({
+                            "type": "screenshot",
+                            "app": self.current_app,
+                            "screenshot": self._last_screenshot,
+                            "text": state.get("text", "")[:2000],
+                        })
+                    clean = "\n".join(l for l in response.split("\n") if not l.startswith("ACTION:"))
+                    if results:
+                        clean += "\n\nDone: " + "; ".join(results)
+                    await ws.send(json.dumps({"type": "chat_response", "id": msg_id, "text": clean}))
+                except Exception as e:
+                    await ws.send(json.dumps({"type": "chat_response", "id": msg_id, "text": f"Error: {e}"}))
+            else:
+                # Save to queue for OpenCode
+                self._chat_queue.append({
+                    "id": msg_id,
+                    "role": "user",
+                    "text": text,
+                    "app": self.current_app,
+                    "screenshot": self._last_screenshot,
+                    "tree": (await self.bridge.get_state(self.current_app)).get("text", "")[:3000],
+                })
+                self._write_chat_file()
+                await ws.send(json.dumps({"type": "chat_response", "id": msg_id, "text": "Saved to queue. Waiting for OpenCode agent..."}))
 
         elif msg_type == "chat_clear":
             self._chat_queue = []

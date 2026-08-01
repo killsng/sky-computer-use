@@ -83,31 +83,50 @@ class WebSocketClient {
 
                     when (type) {
                         "screenshot" -> {
-                            _state.value = _state.value.copy(
-                                app = json.get("app")?.asString ?: _state.value.app,
-                                screenshot = json.get("screenshot")?.asString,
-                                text = json.get("text")?.asString ?: ""
-                            )
+                            try {
+                                _state.value = _state.value.copy(
+                                    app = json.get("app")?.asString ?: _state.value.app,
+                                    screenshot = json.get("screenshot")?.asString,
+                                    text = json.get("text")?.asString ?: ""
+                                )
+                            } catch (e: Exception) {
+                                Log.e("SkyCUA", "Screenshot parse error: ${e.message}")
+                            }
                         }
                         "state" -> {
-                            _state.value = _state.value.copy(
-                                app = json.get("app")?.asString ?: _state.value.app,
-                                screenshot = json.get("screenshot")?.asString,
-                                text = json.get("text")?.asString ?: "",
-                                apps = json.get("apps")?.asString ?: ""
-                            )
+                            try {
+                                _state.value = _state.value.copy(
+                                    app = json.get("app")?.asString ?: _state.value.app,
+                                    screenshot = json.get("screenshot")?.asString,
+                                    text = json.get("text")?.asString ?: "",
+                                    apps = json.get("apps")?.asString ?: ""
+                                )
+                            } catch (e: Exception) {
+                                Log.e("SkyCUA", "State parse error: ${e.message}")
+                            }
                         }
                         "apps" -> {
-                            _state.value = _state.value.copy(
-                                apps = json.get("apps")?.asString ?: ""
-                            )
+                            try {
+                                _state.value = _state.value.copy(
+                                    apps = json.get("apps")?.asString ?: ""
+                                )
+                            } catch (e: Exception) {
+                                Log.e("SkyCUA", "Apps parse error: ${e.message}")
+                            }
                         }
                         "chat_response" -> {
-                            val text = json.get("text")?.asString ?: ""
-                            _state.value = _state.value.copy(
-                                chatMessages = _state.value.chatMessages + ChatMessage("assistant", text),
-                                chatThinking = false
-                            )
+                            try {
+                                val text = json.get("text")?.asString ?: "No response"
+                                _state.value = _state.value.copy(
+                                    chatMessages = _state.value.chatMessages + ChatMessage("assistant", text),
+                                    chatThinking = false
+                                )
+                            } catch (e: Exception) {
+                                _state.value = _state.value.copy(
+                                    chatMessages = _state.value.chatMessages + ChatMessage("assistant", "Error parsing response"),
+                                    chatThinking = false
+                                )
+                            }
                         }
                         "chat_thinking" -> {
                             _state.value = _state.value.copy(chatThinking = true)
