@@ -6,7 +6,12 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import okhttp3.*
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 data class AgentState(
     val app: String = "Safari",
@@ -15,6 +20,7 @@ data class AgentState(
     val apps: String = "",
     val log: List<Map<String, Any>> = emptyList(),
     val connected: Boolean = false,
+    val connecting: Boolean = false,
     val error: String? = null,
     val chatMessages: List<ChatMessage> = emptyList(),
     val chatThinking: Boolean = false
@@ -27,10 +33,21 @@ data class ChatMessage(
 
 class WebSocketClient {
     private var webSocket: WebSocket? = null
-    private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(30, TimeUnit.SECONDS)
-        .build()
+    private val client: OkHttpClient = run {
+        val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+            override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+            override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        })
+        val sslContext = SSLContext.getInstance("TLS")
+        sslContext.init(null, trustAllCerts, SecureRandom())
+        OkHttpClient.Builder()
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .pingInterval(30, TimeUnit.SECONDS)
+            .sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as X509TrustManager)
+            .hostnameVerifier { _, _ -> true }
+            .build()
+    }
     private val gson = Gson()
 
     private val _state = MutableStateFlow(AgentState())
@@ -40,11 +57,15 @@ class WebSocketClient {
     val messages: SharedFlow<String> = _messages.asSharedFlow()
 
     fun connect(url: String) {
-        val wsUrl = if (url.startsWith("ws://") || url.startsWith("wss://")) {
-            if (url.startsWith("ws://")) "wss://" + url.removePrefix("ws://") else url
-        } else {
-            "ws://$url"
+        _state.value = _state.value.copy(connecting = true, error = null)
+        val wsUrl = when {
+            url.startsWith("wss://") -> url
+            url.startsWith("ws://") -> "wss://" + url.removePrefix("ws://")
+            url.startsWith("https://") -> "wss://" + url.removePrefix("https://")
+            url.startsWith("http://") -> "wss://" + url.removePrefix("http://")
+            else -> "wss://$url"
         }
+        Log.d("SkyCUA", "Connecting to $wsUrl")
         val request = Request.Builder()
             .url(wsUrl)
             .build()
@@ -158,6 +179,25 @@ class WebSocketClient {
 
     fun listApps() {
         webSocket?.send(gson.toJson(mapOf("type" to "list_apps")))
+    }
+
+    fun clickCoordinate(x: Float, y: Float) {
+        webSocket?.send(gson.toJson(mapOf(
+            "type" to "action",
+            "tool" to "click",
+            "args" to mapOf("x" to x.toInt(), "y" to y.toInt())
+        )))
+    }
+
+    fun swipe(x1: Float, y1: Float, x2: Float, y2: Float) {
+        webSocket?.send(gson.toJson(mapOf(
+            "type" to "action",
+            "tool" to "drag",
+            "args" to mapOf(
+                "from_x" to x1.toInt(), "from_y" to y1.toInt(),
+                "to_x" to x2.toInt(), "to_y" to y2.toInt()
+            )
+        )))
     }
 
     fun sendChat(text: String) {

@@ -270,9 +270,27 @@ class GeminiChat:
             parts.append({"inlineData": {"mimeType": "image/png", "data": screenshot_b64}})
         contents.append({"role": "user", "parts": parts})
 
+        system_prompt = """You are a Computer Use agent. You can see the user's screen and control their Mac.
+
+To perform actions, use these EXACT commands (one per line):
+ACTION:CLICK:<element_index>
+ACTION:TYPE:<text>
+ACTION:KEY:<key>
+ACTION:SCROLL:<element_index>:<direction>
+ACTION:SET_VALUE:<element_index>:<value>
+
+Examples:
+- To click element 5: ACTION:CLICK:5
+- To type "hello": ACTION:TYPE:hello
+- To press Enter: ACTION:KEY:Return
+- To scroll down on element 3: ACTION:SCROLL:3:down
+
+After describing what you see, include the action command on a separate line.
+Always respond in the same language the user writes in."""
+
         payload = json.dumps({
             "contents": contents,
-            "systemInstruction": {"parts": [{"text": "You are a Computer Use agent. You can see the user's screen and control their Mac. Respond concisely. Always respond in the same language the user writes in."}]}
+            "systemInstruction": {"parts": [{"text": system_prompt}]}
         }).encode()
 
         url = f"{GEMINI_API_URL}?key={self.api_key}"
@@ -285,7 +303,24 @@ class GeminiChat:
         return text
 
     async def _groq_chat(self, message: str) -> str:
-        messages = [{"role": "system", "content": "You are a Computer Use agent. Respond concisely. Always respond in the same language the user writes in."}]
+        system_prompt = """You are a Computer Use agent. You can see the user's screen and control their Mac.
+
+To perform actions, use these EXACT commands (one per line):
+ACTION:CLICK:<element_index>
+ACTION:TYPE:<text>
+ACTION:KEY:<key>
+ACTION:SCROLL:<element_index>:<direction>
+
+Examples:
+- To click element 5: ACTION:CLICK:5
+- To type "hello": ACTION:TYPE:hello
+- To press Enter: ACTION:KEY:Return
+- To scroll down on element 3: ACTION:SCROLL:3:down
+
+After describing what you see, include the action command on a separate line.
+Always respond in the same language the user writes in."""
+
+        messages = [{"role": "system", "content": system_prompt}]
         for h in self.history[-10:]:
             messages.append({"role": h["role"], "content": h["parts"][0]["text"]})
         messages.append({"role": "user", "content": message})
@@ -323,6 +358,34 @@ class StateBroadcaster:
         self._running = False
         self._log: List[dict] = []
         self._last_screenshot: Optional[str] = None
+
+    @staticmethod
+    def parse_actions(text: str) -> List[dict]:
+        import re
+        actions = []
+        pattern = r'ACTION:(CLICK|TYPE|KEY|SCROLL|SET_VALUE):([^\n]+)'
+        for match in re.finditer(pattern, text):
+            action_type = match.group(1)
+            payload = match.group(2).strip()
+            if action_type == "CLICK":
+                if "," in payload:
+                    x, y = payload.split(",", 1)
+                    actions.append({"tool": "click", "args": {"x": int(x.strip()), "y": int(y.strip())}})
+                else:
+                    actions.append({"tool": "click", "args": {"element_index": payload}})
+            elif action_type == "TYPE":
+                actions.append({"tool": "type_text", "args": {"text": payload}})
+            elif action_type == "KEY":
+                actions.append({"tool": "press_key", "args": {"key": payload}})
+            elif action_type == "SCROLL":
+                parts = payload.split(":")
+                if len(parts) == 2:
+                    actions.append({"tool": "scroll", "args": {"element_index": parts[0], "direction": parts[1]}})
+            elif action_type == "SET_VALUE":
+                parts = payload.split(":", 1)
+                if len(parts) == 2:
+                    actions.append({"tool": "set_value", "args": {"element_index": parts[0], "value": parts[1]}})
+        return actions
 
     async def register(self, ws):
         self.clients.add(ws)
@@ -439,7 +502,34 @@ class StateBroadcaster:
                 await ws.send(json.dumps({"type": "chat_thinking"}))
                 response = await self.gemini.chat(text, self._last_screenshot)
                 self.log_add({"action": "chat", "query": text[:100], "response": response[:200]})
-                await ws.send(json.dumps({"type": "chat_response", "text": response}))
+
+                # Parse and execute actions from AI response
+                actions = self.parse_actions(response)
+                results = []
+                for act in actions:
+                    act["args"]["app"] = self.current_app
+                    r = await self.bridge.call_tool(act["tool"], act["args"])
+                    results.append(f"{act['tool']}: {r[:100]}")
+                    self.log_add({"action": act["tool"], "args": act["args"], "result": r[:200]})
+                    await asyncio.sleep(0.3)
+
+                # If actions were executed, refresh screenshot
+                if actions:
+                    await asyncio.sleep(0.5)
+                    state = await self.bridge.get_state(self.current_app)
+                    await self.broadcast({
+                        "type": "screenshot",
+                        "app": self.current_app,
+                        "screenshot": state.get("screenshot"),
+                        "text": state.get("text", "")[:2000],
+                    })
+
+                # Clean response (remove ACTION lines)
+                clean = "\n".join(l for l in response.split("\n") if not l.startswith("ACTION:"))
+                if results:
+                    clean += "\n\nExecuted: " + "; ".join(results)
+
+                await ws.send(json.dumps({"type": "chat_response", "text": clean}))
             except Exception as e:
                 await ws.send(json.dumps({"type": "chat_response", "text": f"Error: {e}"}))
 
