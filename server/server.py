@@ -40,6 +40,9 @@ HOST = "0.0.0.0"
 PORT = 8765
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
+# Groq (free, fast, no vision but good text)
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
 
 class TunnelManager:
     """Manages tunnel for remote access."""
@@ -240,44 +243,70 @@ class AgentBridge:
 
 
 class GeminiChat:
-    """Free AI chat with vision via Google Gemini."""
+    """Free AI chat with vision via Google Gemini or Groq fallback."""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, groq_key: Optional[str] = None):
         self.api_key = api_key
+        self.groq_key = groq_key
         self.history: List[dict] = []
 
     async def chat(self, message: str, screenshot_b64: Optional[str] = None) -> str:
-        contents = list(self.history[-10:])
+        # Try Gemini first
+        try:
+            return await self._gemini_chat(message, screenshot_b64)
+        except Exception as e:
+            # Try Groq fallback
+            if self.groq_key:
+                try:
+                    return await self._groq_chat(message)
+                except Exception as e2:
+                    return f"AI error (Groq): {e2}"
+            return f"AI error: {e}"
 
+    async def _gemini_chat(self, message: str, screenshot_b64: Optional[str] = None) -> str:
+        contents = list(self.history[-10:])
         parts = [{"text": message}]
         if screenshot_b64:
-            parts.append({
-                "inlineData": {
-                    "mimeType": "image/png",
-                    "data": screenshot_b64
-                }
-            })
+            parts.append({"inlineData": {"mimeType": "image/png", "data": screenshot_b64}})
         contents.append({"role": "user", "parts": parts})
 
         payload = json.dumps({
             "contents": contents,
-            "systemInstruction": {
-                "parts": [{"text": "You are a Computer Use agent. You can see the user's screen and control their Mac. Respond concisely. If the user asks you to do something on their computer, describe what actions to take (click, type, scroll, etc). Always respond in the same language the user writes in."}]
-            }
+            "systemInstruction": {"parts": [{"text": "You are a Computer Use agent. You can see the user's screen and control their Mac. Respond concisely. Always respond in the same language the user writes in."}]}
         }).encode()
 
         url = f"{GEMINI_API_URL}?key={self.api_key}"
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=30)
+        data = json.loads(resp.read())
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        self.history.append({"role": "user", "parts": [{"text": message}]})
+        self.history.append({"role": "model", "parts": [{"text": text}]})
+        return text
 
-        try:
-            resp = urllib.request.urlopen(req, timeout=30)
-            data = json.loads(resp.read())
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-            self.history.append({"role": "user", "parts": [{"text": message}]})
-            self.history.append({"role": "model", "parts": [{"text": text}]})
-            return text
-        except Exception as e:
-            return f"Gemini error: {e}"
+    async def _groq_chat(self, message: str) -> str:
+        messages = [{"role": "system", "content": "You are a Computer Use agent. Respond concisely. Always respond in the same language the user writes in."}]
+        for h in self.history[-10:]:
+            messages.append({"role": h["role"], "content": h["parts"][0]["text"]})
+        messages.append({"role": "user", "content": message})
+
+        payload = json.dumps({
+            "model": "llama-3.3-70b-versatile",
+            "messages": messages,
+            "max_tokens": 1024
+        }).encode()
+
+        req = urllib.request.Request(GROQ_API_URL, data=payload, headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.groq_key}",
+            "User-Agent": "SkyCUA/1.0"
+        })
+        resp = urllib.request.urlopen(req, timeout=30)
+        data = json.loads(resp.read())
+        text = data["choices"][0]["message"]["content"]
+        self.history.append({"role": "user", "parts": [{"text": message}]})
+        self.history.append({"role": "model", "parts": [{"text": text}]})
+        return text
 
     def clear(self):
         self.history = []
@@ -406,15 +435,13 @@ class StateBroadcaster:
                 }))
                 return
 
-            await ws.send(json.dumps({"type": "chat_thinking"}))
-
-            response = await self.gemini.chat(text, self._last_screenshot)
-            self.log_add({"action": "chat", "query": text[:100], "response": response[:200]})
-
-            await ws.send(json.dumps({
-                "type": "chat_response",
-                "text": response,
-            }))
+            try:
+                await ws.send(json.dumps({"type": "chat_thinking"}))
+                response = await self.gemini.chat(text, self._last_screenshot)
+                self.log_add({"action": "chat", "query": text[:100], "response": response[:200]})
+                await ws.send(json.dumps({"type": "chat_response", "text": response}))
+            except Exception as e:
+                await ws.send(json.dumps({"type": "chat_response", "text": f"Error: {e}"}))
 
         elif msg_type == "chat_clear":
             if self.gemini:
@@ -429,10 +456,11 @@ async def main():
                         help="Enable tunnel for remote access")
     parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--gemini-key", help="Google Gemini API key for AI chat (free tier)")
+    parser.add_argument("--groq-key", help="Groq API key (free fallback, no vision)")
     args = parser.parse_args()
 
     bridge = AgentBridge()
-    gemini = GeminiChat(args.gemini_key) if args.gemini_key else None
+    gemini = GeminiChat(args.gemini_key, args.groq_key) if args.gemini_key else None
     broadcaster = StateBroadcaster(bridge, gemini)
     tunnel = None
 
