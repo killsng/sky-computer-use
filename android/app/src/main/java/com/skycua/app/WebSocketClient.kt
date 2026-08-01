@@ -15,7 +15,14 @@ data class AgentState(
     val apps: String = "",
     val log: List<Map<String, Any>> = emptyList(),
     val connected: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val chatMessages: List<ChatMessage> = emptyList(),
+    val chatThinking: Boolean = false
+)
+
+data class ChatMessage(
+    val role: String, // "user" or "assistant"
+    val text: String
 )
 
 class WebSocketClient {
@@ -73,6 +80,19 @@ class WebSocketClient {
                             _state.value = _state.value.copy(
                                 apps = json.get("apps")?.asString ?: ""
                             )
+                        }
+                        "chat_response" -> {
+                            val text = json.get("text")?.asString ?: ""
+                            _state.value = _state.value.copy(
+                                chatMessages = _state.value.chatMessages + ChatMessage("assistant", text),
+                                chatThinking = false
+                            )
+                        }
+                        "chat_thinking" -> {
+                            _state.value = _state.value.copy(chatThinking = true)
+                        }
+                        "chat_cleared" -> {
+                            _state.value = _state.value.copy(chatMessages = emptyList())
                         }
                     }
                 } catch (e: Exception) {
@@ -138,6 +158,17 @@ class WebSocketClient {
 
     fun listApps() {
         webSocket?.send(gson.toJson(mapOf("type" to "list_apps")))
+    }
+
+    fun sendChat(text: String) {
+        _state.value = _state.value.copy(
+            chatMessages = _state.value.chatMessages + ChatMessage("user", text)
+        )
+        webSocket?.send(gson.toJson(mapOf("type" to "chat", "text" to text)))
+    }
+
+    fun clearChat() {
+        webSocket?.send(gson.toJson(mapOf("type" to "chat_clear")))
     }
 
     fun disconnect() {

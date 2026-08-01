@@ -13,6 +13,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -68,9 +69,15 @@ fun SkyCUAApp(client: WebSocketClient) {
     val state by client.state.collectAsState()
     var serverHost by remember { mutableStateOf("192.168.1.100:8765") }
     var showConnectDialog by remember { mutableStateOf(!state.connected) }
-    var showInput by remember { mutableStateOf(false) }
     var inputText by remember { mutableStateOf("") }
-    val scope = rememberCoroutineScope()
+    var chatInput by remember { mutableStateOf("") }
+    val chatListState = rememberLazyListState()
+
+    LaunchedEffect(state.chatMessages.size) {
+        if (state.chatMessages.isNotEmpty()) {
+            chatListState.animateScrollToItem(state.chatMessages.size - 1)
+        }
+    }
 
     LaunchedEffect(Unit) {
         client.connect(serverHost)
@@ -270,6 +277,78 @@ fun SkyCUAApp(client: WebSocketClient) {
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                        }
+                    }
+                }
+            }
+
+            // AI Chat
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(8.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A2E)),
+                shape = RoundedCornerShape(8.dp)
+            ) {
+                Column(Modifier.padding(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.SmartToy, "AI", tint = Color(0xFF90CAF9), modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("AI Agent", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF90CAF9))
+                        if (state.chatThinking) {
+                            Spacer(Modifier.width(8.dp))
+                            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+
+                    LazyColumn(
+                        state = chatListState,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp)
+                            .padding(vertical = 4.dp)
+                    ) {
+                        items(state.chatMessages) { msg ->
+                            val bgColor = if (msg.role == "user") Color(0xFF2D4A7A) else Color(0xFF2A3A2A)
+                            val textColor = if (msg.role == "user") Color(0xFF90CAF9) else Color(0xFFA5D6A7)
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp)
+                                    .background(bgColor, RoundedCornerShape(6.dp))
+                                    .padding(8.dp)
+                            ) {
+                                Text(msg.text, fontSize = 12.sp, color = textColor)
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = chatInput,
+                            onValueChange = { chatInput = it },
+                            modifier = Modifier.weight(1f),
+                            placeholder = { Text("Ask AI agent...", fontSize = 14.sp) },
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        FilledTonalButton(
+                            onClick = {
+                                if (chatInput.isNotBlank()) {
+                                    client.sendChat(chatInput)
+                                    chatInput = ""
+                                }
+                            },
+                            enabled = chatInput.isNotBlank() && !state.chatThinking
+                        ) {
+                            Icon(Icons.Default.Send, "Send", modifier = Modifier.size(18.dp))
                         }
                     }
                 }

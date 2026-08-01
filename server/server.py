@@ -2,15 +2,16 @@
 
 Streams screenshots + accessibility tree to connected Android app.
 Supports tunnels for remote access from anywhere.
+Includes AI agent chat via Google Gemini (free, with vision).
 
 Usage:
-    python server.py                    # local only
-    python server.py --tunnel ngrok     # via ngrok
-    python server.py --tunnel cloudflare # via cloudflare tunnel
-    python server.py --tunnel localtunnel # via localtunnel
+    python server.py                        # local only
+    python server.py --tunnel ngrok         # via ngrok
+    python server.py --gemini-key YOUR_KEY  # enable AI chat
 """
 
 import asyncio
+import base64
 import json
 import os
 import shutil
@@ -27,10 +28,17 @@ except ImportError:
     print("pip install websockets")
     sys.exit(1)
 
+try:
+    import urllib.request
+    import urllib.parse
+except ImportError:
+    pass
+
 MCP_SERVER = os.path.join(os.path.dirname(__file__), "..", "serve.py")
 SCREENSHOT_INTERVAL = 2.0
 HOST = "0.0.0.0"
 PORT = 8765
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 
 class TunnelManager:
@@ -231,15 +239,61 @@ class AgentBridge:
             self.proc.terminate()
 
 
+class GeminiChat:
+    """Free AI chat with vision via Google Gemini."""
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.history: List[dict] = []
+
+    async def chat(self, message: str, screenshot_b64: Optional[str] = None) -> str:
+        contents = list(self.history[-10:])
+
+        parts = [{"text": message}]
+        if screenshot_b64:
+            parts.append({
+                "inlineData": {
+                    "mimeType": "image/png",
+                    "data": screenshot_b64
+                }
+            })
+        contents.append({"role": "user", "parts": parts})
+
+        payload = json.dumps({
+            "contents": contents,
+            "systemInstruction": {
+                "parts": [{"text": "You are a Computer Use agent. You can see the user's screen and control their Mac. Respond concisely. If the user asks you to do something on their computer, describe what actions to take (click, type, scroll, etc). Always respond in the same language the user writes in."}]
+            }
+        }).encode()
+
+        url = f"{GEMINI_API_URL}?key={self.api_key}"
+        req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+
+        try:
+            resp = urllib.request.urlopen(req, timeout=30)
+            data = json.loads(resp.read())
+            text = data["candidates"][0]["content"]["parts"][0]["text"]
+            self.history.append({"role": "user", "parts": [{"text": message}]})
+            self.history.append({"role": "model", "parts": [{"text": text}]})
+            return text
+        except Exception as e:
+            return f"Gemini error: {e}"
+
+    def clear(self):
+        self.history = []
+
+
 class StateBroadcaster:
     """Periodically captures state and broadcasts to all clients."""
 
-    def __init__(self, bridge: AgentBridge):
+    def __init__(self, bridge: AgentBridge, gemini: Optional[GeminiChat] = None):
         self.bridge = bridge
+        self.gemini = gemini
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self.current_app = "Safari"
         self._running = False
         self._log: List[dict] = []
+        self._last_screenshot: Optional[str] = None
 
     async def register(self, ws):
         self.clients.add(ws)
@@ -332,12 +386,40 @@ class StateBroadcaster:
 
         elif msg_type == "screenshot":
             state = await self.bridge.get_state(self.current_app)
+            self._last_screenshot = state.get("screenshot")
             await ws.send(json.dumps({
                 "type": "screenshot",
                 "app": self.current_app,
-                "screenshot": state.get("screenshot"),
+                "screenshot": self._last_screenshot,
                 "text": state.get("text", "")[:2000],
             }))
+
+        elif msg_type == "chat":
+            text = msg.get("text", "")
+            if not text:
+                return
+
+            if not self.gemini:
+                await ws.send(json.dumps({
+                    "type": "chat_response",
+                    "text": "AI chat not configured. Set --gemini-key on server.",
+                }))
+                return
+
+            await ws.send(json.dumps({"type": "chat_thinking"}))
+
+            response = await self.gemini.chat(text, self._last_screenshot)
+            self.log_add({"action": "chat", "query": text[:100], "response": response[:200]})
+
+            await ws.send(json.dumps({
+                "type": "chat_response",
+                "text": response,
+            }))
+
+        elif msg_type == "chat_clear":
+            if self.gemini:
+                self.gemini.clear()
+            await ws.send(json.dumps({"type": "chat_cleared"}))
 
 
 async def main():
@@ -346,10 +428,12 @@ async def main():
     parser.add_argument("--tunnel", choices=["ngrok", "cloudflare", "localtunnel"],
                         help="Enable tunnel for remote access")
     parser.add_argument("--port", type=int, default=PORT)
+    parser.add_argument("--gemini-key", help="Google Gemini API key for AI chat (free tier)")
     args = parser.parse_args()
 
     bridge = AgentBridge()
-    broadcaster = StateBroadcaster(bridge)
+    gemini = GeminiChat(args.gemini_key) if args.gemini_key else None
+    broadcaster = StateBroadcaster(bridge, gemini)
     tunnel = None
 
     await bridge.start()
